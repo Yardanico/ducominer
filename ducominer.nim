@@ -35,15 +35,10 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
     while true:
         # Checking if the difficulty is set to "NORMAL" and sending a job request to the server
         if difficulty == "NORMAL": 
-            if sharecount mod 200 != 0:
-                soc.send(fmt"JOB,{username}")
-            else:
-                soc.send("JOB,5Q")   # 0.5% donation to the developer =)
+            soc.send(fmt"JOB,{username}")
         else:
-            if sharecount mod 200 != 0: 
-                soc.send(fmt"JOB,{username},{difficulty}")
-            else:
-                soc.send(fmt"JOB,5Q,{difficulty}")  # 0.5% donation to the developer =)
+            soc.send(fmt"JOB,{username},{difficulty}")
+        
         let job = soc.recvAll()
 
         var 
