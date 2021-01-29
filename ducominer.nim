@@ -6,8 +6,10 @@ import std / [
     os, times
 ]
 
-#import hashlib/rhash/sha1
-import nimcrypto/sha
+when defined(nimcrypto):
+    import nimcrypto/sha
+else:
+    import hashlib/rhash/sha1
 
 var 
     startTime: Time
@@ -49,12 +51,12 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
             diff: int
         # Parse the job from the server
         if not scanf(job, "$+,$+,$i", prefix, target, diff):
-            echo job
             quit("Error: couldn't parse job from the server!")
 
-        var ctx: sha1
-        ctx.init()
-        ctx.update(prefix)
+        when defined(nimcrypto):
+            var ctx: sha1
+            ctx.init()
+            ctx.update(prefix)
 
         # A loop for solving the job
         for res in 0 .. 100 * diff:
@@ -62,23 +64,25 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
             # Checking if the hashes of the job matches our hash
             atomicInc hashesCnt
 
-            #if $count[RHASH_SHA1](prefix & data) == target:
-            var ctxCopy = ctx
-            ctxCopy.update(data)
+            when defined(nimcrypto):
+                var ctxCopy = ctx
+                ctxCopy.update(data)
 
-            if $ctxCopy.finish() == target:
-                # Send the result to the server
+            let isGood = when defined(nimcrypto):
+                $ctxCopy.final() == target
+            else:
+                $count[RHASH_SHA1](prefix & data) == target
+
+            if isGood:
+                # Send the share to the server
                 soc.send(fmt"{data},,{miner_name}")
-                # Get an answer
+
                 let feedback = soc.recvAll()
-                # Check it
                 if feedback == "GOOD":
                     atomicInc acceptedCnt
-                    #echo fmt"Accepted share {data} with a difficulty of {diff}"
                 elif feedback == "BAD":
                     atomicInc rejectedCnt
-                    #echo fmt"Rejected share {data} with a difficulty of {diff}"
-                echo "feedback ", feedback
+                
                 inc sharecount
                 # Break from the loop because the job was solved
                 break
@@ -92,17 +96,18 @@ proc monitorThread() {.thread.} =
         let hashesSec = (hashesCnt.load().float / mils) * 1000
         let khsec = hashesSec / 1000
         let mhsec = khsec / 1000
-        let toShow = if mhsec > 0:
-            $mhsec.int & " MH/s"
-        elif khsec > 0:
-            $khsec.int & " KH/s"
+        let toShow = if mhsec >= 1:
+            mhsec.formatFloat(ffDecimal, 2) & " MH/s"
+        elif khsec >= 1:
+            khsec.formatFloat(ffDecimal, 2) & " KH/s"
         else:
-            $hashesSec.int & " H/s"
-        hashesCnt.store(0)
+            hashesSec.formatFloat(ffDecimal, 2) & " H/s"
 
         startTime = getTime()
         let strTime = startTime.format("HH:mm:ss")
         echo fmt"{strTime} Hash rate: {toShow}, Accepted: {acceptedCnt.load()}, Rejected: {rejectedCnt.load()}"
+
+        hashesCnt.store(0)
         acceptedCnt.store(0)
         rejectedCnt.store(0)
 
