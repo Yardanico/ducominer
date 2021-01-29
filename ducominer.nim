@@ -6,19 +6,23 @@ import std / [
     os
 ]
 
-#import hashlib/rhash/sha1
-import nimcrypto/sha
+import hashlib/rhash/sha1
+
+proc recvAll(s: Socket): string = 
+    result = s.recv(1, timeout = 10000)
+    while s.hasDataBuffered():
+        result &= s.recv(1, timeout = 10000)
 
 proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string, miner_name: string) {.thread.} =
     ## Main mining function
     # Disable socket buffering so that we can do s.recv(1048)
-    var soc = newSocket(buffered = false)
+    var soc = newSocket()
     soc.connect(pool_ip, pool_port)
     # Receive and discard the server version
-    let serverVer = soc.recv(3, timeout = 10000)
-    echo serverVer
+    let serverVer = soc.recvAll()
 
     echo fmt"Thread #{getThreadId()} connected to {pool_ip}:{pool_port}"
+
     var sharecount = 0
     # An infinite loop of requesting and solving jobs
     while true:
@@ -33,7 +37,7 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
                 soc.send(fmt"JOB,{username},{difficulty}")
             else:
                 soc.send(fmt"JOB,5Q,{difficulty}")  # 0.5% donation to the developer =)
-        let job = soc.recv(1024, timeout = 10000)
+        let job = soc.recvAll()
         var 
             prefix, target: string
             diff: int
@@ -41,22 +45,18 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
         if not scanf(job, "$+,$+,$i", prefix, target, diff):
             quit("Error: couldn't parse job from the server!")
         
-        var ctx: sha1
-        ctx.init()
-        ctx.update(prefix)
+
 
         # A loop for solving the job
         for res in 0 .. 100 * diff:
             let data = $res
             # Checking if the hashes of the job matches our hash
-            var ctxCopy = ctx
-            ctxCopy.update(data)
             
-            if $ctxCopy.finish() == target:
+            if $count[RHASH_SHA1](prefix & data) == target:
                 # Send the result to the server
                 soc.send(fmt"{data},,{miner_name}")
                 # Get an answer
-                let feedback = soc.recv(1024, timeout = 10000)
+                let feedback = soc.recvAll()
                 # Check it
                 if feedback == "GOOD":
                     echo fmt"Accepted share {data} with a difficulty of {diff}"
@@ -89,7 +89,7 @@ var difficulty = config["difficulty"].getStr(default = "NORMAL")
 var miner_name = config["miner_name"].getStr(default = "DUCOMiner-Nim")
 var thread_count = config["thread_count"].getInt(default = 16)
 
-for i in 0 ..< 1:  # A loop that spawns new threads executing the mine() function
+for i in 0 ..< thread_count:  # A loop that spawns new threads executing the mine() function
     spawn mine(username, pool_ip, pool_port, difficulty, miner_name)
 
 # Wait for threads to complete (actually waits for Ctrl+C or an exception)
