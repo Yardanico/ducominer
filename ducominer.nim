@@ -1,56 +1,76 @@
-import hashlib/rhash/sha1
-import net, httpclient
-import json
-import strutils, strformat
-import threadpool
-import os
+import std / [
+    net, httpclient,
+    json,
+    strutils, strformat, strscans,
+    threadpool,
+    os
+]
 
-proc recvAll(s: Socket): string =   # Function for receiving an arbitrary amount of data from the socket
-    var res = ""
-    res = res & s.recv(1, timeout=45000)
-    while s.hasDataBuffered():
-        res = res & s.recv(1, timeout=45000)       
-    return res
+#import hashlib/rhash/sha1
+import nimcrypto/sha
 
-proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string, miner_name: string) {.thread.} =  # Mining functions executed in multiple threads
-    var soc: Socket = newSocket()   # Creating a new TCP socket
-    soc.connect(pool_ip, pool_port) # Connecting to the mining server
-    discard soc.recv(3, timeout=45000)  # Receiving the server version and voiding it
+proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string, miner_name: string) {.thread.} =
+    ## Main mining function
+    # Disable socket buffering so that we can do s.recv(1048)
+    var soc = newSocket(buffered = false)
+    soc.connect(pool_ip, pool_port)
+    # Receive and discard the server version
+    let serverVer = soc.recv(3, timeout = 10000)
+    echo serverVer
 
     echo fmt"Thread #{getThreadId()} connected to {pool_ip}:{pool_port}"
-
-    var job: seq[string] 
-    var feedback: string
-    var sharecount: int = 0
-
-    while true: # An infinite loop of requesting and solving jobs
-        if difficulty == "NORMAL":  # Checking if the difficulty is set to "NORMAL" and sending a job request to the server
-            if sharecount mod 200 != 0: 
+    var sharecount = 0
+    # An infinite loop of requesting and solving jobs
+    while true:
+        # Checking if the difficulty is set to "NORMAL" and sending a job request to the server
+        if difficulty == "NORMAL": 
+            if sharecount mod 200 != 0:
                 soc.send(fmt"JOB,{username}")
             else:
-                soc.send(fmt"JOB,5Q")   # 0.5% donation to the developer =)
+                soc.send("JOB,5Q")   # 0.5% donation to the developer =)
         else:
             if sharecount mod 200 != 0: 
                 soc.send(fmt"JOB,{username},{difficulty}")
             else:
                 soc.send(fmt"JOB,5Q,{difficulty}")  # 0.5% donation to the developer =)
-        job = soc.recvAll().split(",")  # Receiving a job from the server that is comma-separated
-        for result in 0..100 * parseInt(job[2]):    # A loop for solving the job
-            if $count[RHASH_SHA1](job[0] & $(result)) == job[1]:    # Checking if the hashes of the job matches our hash
-                soc.send($(result) & ",," & miner_name) # Sending the result to the server
-                feedback = soc.recvAll()    # Receiving feedback from the server
-                if feedback == "GOOD":  # Checking the server feedback
-                    echo fmt"Accepted share {result} with a difficulty of {parseInt(job[2])}"
+        let job = soc.recv(1024, timeout = 10000)
+        var 
+            prefix, target: string
+            diff: int
+        # Parse the job from the server
+        if not scanf(job, "$+,$+,$i", prefix, target, diff):
+            quit("Error: couldn't parse job from the server!")
+        
+        var ctx: sha1
+        ctx.init()
+        ctx.update(prefix)
+
+        # A loop for solving the job
+        for res in 0 .. 100 * diff:
+            let data = $res
+            # Checking if the hashes of the job matches our hash
+            var ctxCopy = ctx
+            ctxCopy.update(data)
+            
+            if $ctxCopy.finish() == target:
+                # Send the result to the server
+                soc.send(fmt"{data},,{miner_name}")
+                # Get an answer
+                let feedback = soc.recv(1024, timeout = 10000)
+                # Check it
+                if feedback == "GOOD":
+                    echo fmt"Accepted share {data} with a difficulty of {diff}"
                 elif feedback == "BAD":
-                    echo fmt"Rejected share {result} with a difficulty of {parseInt(job[2])}"
-                sharecount += 1
-                break # Breaking from the loop, as the job was solved
+                    echo fmt"Rejected share {data} with a difficulty of {diff}"
+                inc sharecount
+                # Break from the loop because the job was solved
+                break
 
 var config: JsonNode
 if paramCount() < 1:
     try:
         echo "Config file location not specified, using default location [./config.json]"
-        config = parseJson(readFile("./config.json"))   # Parsing a JSON config
+        config = parseFile("./config.json")
     except:
         echo "Config not found at default location. Please specify the config file location."
         echo ""
@@ -58,20 +78,19 @@ if paramCount() < 1:
         echo "You can find an example config file at https://github.com/its5Q/ducominer/config.example.json"
         quit(1)
 else:
-    config = parseJson(readFile(paramStr(1)))   # Parsing a JSON config
+    config = parseFile(paramStr(1))
 
-let client: HttpClient = newHttpClient()    # Creating a new HTTP client
-
-var pool_address: string = client.getContent(config["ip_url"].getStr()) # Making a request to the URL specified in the config for getting mining server details
-
-var pool_ip: string = pool_address.split("\n")[0]   # Parsing the server IP
-var pool_port: Port = Port(parseInt(pool_address.split("\n")[1]))   # Parsing the server port
+let client = newHttpClient()
+var pool_addr = client.getContent(config["ip_url"].getStr()).splitLines()
+var (pool_ip, pool_port) = (pool_addr[0], Port(parseInt(pool_addr[1])))
 
 var username = config["username"].getStr(default = "5Q")
 var difficulty = config["difficulty"].getStr(default = "NORMAL")  
 var miner_name = config["miner_name"].getStr(default = "DUCOMiner-Nim")
 var thread_count = config["thread_count"].getInt(default = 16)
 
-for i in countup(0, thread_count - 1):  # A loop that spawns new threads executing the mine() function
+for i in 0 ..< 1:  # A loop that spawns new threads executing the mine() function
     spawn mine(username, pool_ip, pool_port, difficulty, miner_name)
-sync()  # Synchronizing the threads so the program doesn't exit until Ctrl+C is pressed or an exception is raised
+
+# Wait for threads to complete (actually waits for Ctrl+C or an exception)
+sync()
