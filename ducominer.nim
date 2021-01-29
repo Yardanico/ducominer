@@ -2,16 +2,21 @@ import std / [
     net, httpclient,
     json,
     strutils, strformat, strscans,
-    threadpool,
-    os
+    threadpool, atomics,
+    os, times
 ]
 
-import hashlib/rhash/sha1
+#import hashlib/rhash/sha1
+import nimcrypto/sha
+
+var 
+    startTime: Time
+    acceptedCnt, rejectedCnt, hashesCnt: Atomic[int]
 
 proc recvAll(s: Socket): string = 
-    result = s.recv(1, timeout = 10000)
+    result = s.recv(1, timeout = 15000)
     while s.hasDataBuffered():
-        result &= s.recv(1, timeout = 10000)
+        result &= s.recv(1, timeout = 15000)
 
 proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string, miner_name: string) {.thread.} =
     ## Main mining function
@@ -38,33 +43,68 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
             else:
                 soc.send(fmt"JOB,5Q,{difficulty}")  # 0.5% donation to the developer =)
         let job = soc.recvAll()
+
         var 
             prefix, target: string
             diff: int
         # Parse the job from the server
         if not scanf(job, "$+,$+,$i", prefix, target, diff):
+            echo job
             quit("Error: couldn't parse job from the server!")
-        
 
+        var ctx: sha1
+        ctx.init()
+        ctx.update(prefix)
 
         # A loop for solving the job
         for res in 0 .. 100 * diff:
             let data = $res
             # Checking if the hashes of the job matches our hash
-            
-            if $count[RHASH_SHA1](prefix & data) == target:
+            atomicInc hashesCnt
+
+            #if $count[RHASH_SHA1](prefix & data) == target:
+            var ctxCopy = ctx
+            ctxCopy.update(data)
+
+            if $ctxCopy.finish() == target:
                 # Send the result to the server
                 soc.send(fmt"{data},,{miner_name}")
                 # Get an answer
                 let feedback = soc.recvAll()
                 # Check it
                 if feedback == "GOOD":
-                    echo fmt"Accepted share {data} with a difficulty of {diff}"
+                    atomicInc acceptedCnt
+                    #echo fmt"Accepted share {data} with a difficulty of {diff}"
                 elif feedback == "BAD":
-                    echo fmt"Rejected share {data} with a difficulty of {diff}"
+                    atomicInc rejectedCnt
+                    #echo fmt"Rejected share {data} with a difficulty of {diff}"
+                echo "feedback ", feedback
                 inc sharecount
                 # Break from the loop because the job was solved
                 break
+
+proc monitorThread() {.thread.} = 
+    startTime = getTime()
+    while true:
+        sleep(2000)
+        let mils = (getTime() - startTime).inMilliseconds.float
+
+        let hashesSec = (hashesCnt.load().float / mils) * 1000
+        let khsec = hashesSec / 1000
+        let mhsec = khsec / 1000
+        let toShow = if mhsec > 0:
+            $mhsec.int & " MH/s"
+        elif khsec > 0:
+            $khsec.int & " KH/s"
+        else:
+            $hashesSec.int & " H/s"
+        hashesCnt.store(0)
+
+        startTime = getTime()
+        let strTime = startTime.format("HH:mm:ss")
+        echo fmt"{strTime} Hash rate: {toShow}, Accepted: {acceptedCnt.load()}, Rejected: {rejectedCnt.load()}"
+        acceptedCnt.store(0)
+        rejectedCnt.store(0)
 
 var config: JsonNode
 if paramCount() < 1:
@@ -91,6 +131,7 @@ var thread_count = config["thread_count"].getInt(default = 16)
 
 for i in 0 ..< thread_count:  # A loop that spawns new threads executing the mine() function
     spawn mine(username, pool_ip, pool_port, difficulty, miner_name)
+spawn monitorThread()
 
 # Wait for threads to complete (actually waits for Ctrl+C or an exception)
 sync()
