@@ -64,7 +64,7 @@ proc mine(username: string, pool_ip: string, pool_port: Port, difficulty: string
                 ctxCopy.update(data)
 
             let isGood = when defined(nimcrypto):
-                $ctxCopy.final() == target
+                $ctxCopy.finish() == target
             else:
                 $count[RHASH_SHA1](prefix & data) == target
 
