@@ -97,7 +97,7 @@ proc minerThread() {.thread.} =
         elif feedback == "BAD":
           atomicInc rejectedCnt
         elif feedback == "BLOCK":
-          
+
         
         # Break from the loop because the job was solved
         break
@@ -138,8 +138,8 @@ proc offsetThread {.thread.} =
       echo fmt"Updated old offset {oldOffset} to {offset}"
     except:
       echo getCurrentExceptionMsg()
-    # Sleep one minute
-    sleep(60000)
+    # Sleep two minutes
+    sleep(120000)
 
 proc main = 
   spawn offsetThread()
