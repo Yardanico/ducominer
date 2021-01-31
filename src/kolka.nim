@@ -59,11 +59,9 @@ proc getBestOffset*(): int =
   let j = parseJson(c.getContent("https://raw.githubusercontent.com/revoxhere/duco-statistics/master/api.json"))
   let startBlockCnt = j["Mined blocks"].getInt()
   c.close()
-  #echo "Got starting block count: ", startBlockCnt
 
   var data: seq[MaxBalance]
   for i in 0 ..< 25:
-    #echo "Iteration " & $i
     data.add doIter(startBlockCnt)
   
   proc mycmp(x, y: MaxBalance): int = 
@@ -71,5 +69,9 @@ proc getBestOffset*(): int =
   
   data.sort(mycmp, order = Descending)
   let best = data[0]
-  #echo fmt"Best offset: {best.offset}, time spent: {best.totalTime / 60} minutes, balance: {best.totalSum}"
+  when isMainModule:
+    echo fmt"Best offset: {best.offset}, time spent: {best.totalTime / 60} minutes, balance: {best.totalSum}"
   result = best.offset
+
+when isMainModule:
+  discard getBestOffset()

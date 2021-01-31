@@ -1,6 +1,5 @@
 import std / [
-  net, httpclient,
-  json,
+  net,
   strutils, strformat, strscans,
   threadpool, atomics,
   os, times
@@ -8,13 +7,20 @@ import std / [
 
 import nimcrypto/sha
 
+import kolka
+
 const
   Username = "kalaros"
   MinerName = "test"
   Difficulty = "NORMAL"
-  ThreadCount = 32
+  ThreadCount = 40
+
   PoolIp = "51.15.127.80"
   PoolPort = Port(2811)
+
+  MonitorMs = 15000
+
+  DoFakeSleep = true
 
 var 
   startTime: Time
@@ -36,7 +42,7 @@ proc minerThread() {.thread.} =
   # Receive and discard the server version
   let serverVer = soc.recvAll()
 
-  echo fmt"Thread #{getThreadId()} connected to {PoolIp}:{PoolPort}"
+  #echo fmt"Thread #{getThreadId()} connected to {PoolIp}:{PoolPort}"
   # An infinite loop of requesting and solving jobs
   while true:
     # Checking if the difficulty is set to "NORMAL" and sending a job request to the server
@@ -81,7 +87,8 @@ proc minerThread() {.thread.} =
         # Calculate the amount of time we need to sleep for:
         var sleepFor = clamp(sleepOffset.load() - spent, 0, 2500)
         # Actually sleep
-        sleep(sleepFor.int)
+        when DoFakeSleep:
+          sleep(sleepFor.int)
         soc.send(fmt"{data},,{MinerName}")
 
         let feedback = soc.recvAll()
@@ -89,6 +96,8 @@ proc minerThread() {.thread.} =
           atomicInc acceptedCnt
         elif feedback == "BAD":
           atomicInc rejectedCnt
+        elif feedback == "BLOCK":
+          
         
         # Break from the loop because the job was solved
         break
@@ -96,9 +105,11 @@ proc minerThread() {.thread.} =
 proc monitorThread() {.thread.} = 
   startTime = getTime()
   while true:
-    sleep(2000)
+    sleep(MonitorMs)
+    # Get time diff in milliseconds
     let mils = (getTime() - startTime).inMilliseconds.float
 
+    # Calculate amount of hashes per second
     let hashesSec = (hashesCnt.load().float / mils) * 1000
     let khsec = hashesSec / 1000
     let mhsec = khsec / 1000
@@ -113,11 +124,10 @@ proc monitorThread() {.thread.} =
     let strTime = startTime.format("HH:mm:ss")
     echo fmt"{strTime} Hash rate: {toShow}, Accepted: {acceptedCnt.load()}, Rejected: {rejectedCnt.load()}"
 
+    # Reset the counters
     hashesCnt.store(0)
     acceptedCnt.store(0)
     rejectedCnt.store(0)
-
-import kolka
 
 proc offsetThread {.thread.} = 
   while true:
@@ -128,7 +138,8 @@ proc offsetThread {.thread.} =
       echo fmt"Updated old offset {oldOffset} to {offset}"
     except:
       echo getCurrentExceptionMsg()
-    sleep(30000)
+    # Sleep one minute
+    sleep(60000)
 
 proc main = 
   spawn offsetThread()
