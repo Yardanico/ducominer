@@ -24,7 +24,7 @@ const
 
 var 
   startTime: Time
-  acceptedCnt, rejectedCnt, hashesCnt: Atomic[int]
+  acceptedCnt, rejectedCnt, hashesCnt, blockCnt: Atomic[int]
   sleepOffset: Atomic[int]
 
 sleepOffset.store(1800)
@@ -97,7 +97,7 @@ proc minerThread() {.thread.} =
         elif feedback == "BAD":
           atomicInc rejectedCnt
         elif feedback == "BLOCK":
-
+          atomicInc blockCnt
         
         # Break from the loop because the job was solved
         break
@@ -122,7 +122,7 @@ proc monitorThread() {.thread.} =
 
     startTime = getTime()
     let strTime = startTime.format("HH:mm:ss")
-    echo fmt"{strTime} Hash rate: {toShow}, Accepted: {acceptedCnt.load()}, Rejected: {rejectedCnt.load()}"
+    echo fmt"{strTime} Hash rate: {toShow}, Accepted: {acceptedCnt.load()}, Rejected: {rejectedCnt.load()}, Big blocks (total): {blockCnt.load()}"
 
     # Reset the counters
     hashesCnt.store(0)

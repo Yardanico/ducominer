@@ -5,8 +5,12 @@ import std / [
 
 randomize()
 
+const
+  Ping = 53 # Ping to the server
+  MaxTime = 1000 * 60 * 60 * 3
+
 proc calc(shareTime, rand, diff: int): float = 
-  var shareTime = float(shareTime + 60) # emulate ping
+  var shareTime = float(shareTime + Ping) # emulate ping
   let stSquared = shareTime * shareTime
 
   if shareTime < 2500:
@@ -17,9 +21,6 @@ proc calc(shareTime, rand, diff: int): float =
 type
   MaxBlock = tuple[diff: int, rand: int, required: int, spent: int, res: float]
   MaxBalance = tuple[offset: int, totalTime: float, totalSum: float]
-
-const
-  MaxTime = 1000 * 60 * 60 * 3
 
 proc doIter(startBlockCnt: int): MaxBalance = 
   var blockCnt = startBlockCnt
