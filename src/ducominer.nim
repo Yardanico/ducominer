@@ -6,10 +6,7 @@ import std / [
   os, times
 ]
 
-when defined(nimcrypto):
-  import nimcrypto/sha
-else:
-  import hashlib/rhash/sha1
+import nimcrypto/sha
 
 const
   Username = "kalaros"
@@ -58,28 +55,22 @@ proc minerThread() {.thread.} =
     if not scanf(job, "$+,$+,$i", prefix, target, diff):
       quit("Error: couldn't parse job from the server!")
 
-    when defined(nimcrypto):
-      var ctx: sha1
-      ctx.init()
-      ctx.update(prefix)
+    # Initialize the sha1 context and add prefix
+    var ctx: sha1
+    ctx.init()
+    ctx.update(prefix)
     
     # A loop for solving the job
     for res in 0 .. 100 * diff:
       let data = $res
       # Checking if the hashes of the job matches our hash
       atomicInc hashesCnt
-
-      when defined(nimcrypto):
-        var ctxCopy = ctx
-        ctxCopy.update(data)
-
-      let isGood = when defined(nimcrypto):
-        $ctxCopy.finish() == target
-      else:
-        $count[RHASH_SHA1](prefix & data) == target
+      # Copy the initialized context and add the value
+      var ctxCopy = ctx
+      ctxCopy.update(data)
 
       # The result is correct
-      if isGood:
+      if $ctxCopy.finish() == target:
         # Calculate the amount of time we spent calculatign the sahre (in ms)
         let spent = (getTime() - start).inMilliseconds
         # Calculate the required amount of time:
